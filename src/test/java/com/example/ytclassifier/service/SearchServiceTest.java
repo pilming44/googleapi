@@ -240,29 +240,31 @@ class SearchServiceTest {
     }
 
     @Test
-    void resume_uses_latest_run_not_all_history() {
-        // 1차 실행(오래된 실행): 2024-01-10(최저)
+    void resume_continuesFromGlobalOldest_acrossThreeRuns() {
+        // 이어서 수집은 '같은 검색어·길이·정렬' 전체 이력의 가장 오래된 게시일 다음 날부터 재개한다.
+        // (최신순에서는 매 실행이 과거로만 내려가므로 '전체 이력 최古 = 가장 최근 실행의 최古'가 항상 일치한다.)
+        // 1차: a(03-10), b(03-05) → 전체 최古 03-05
         given(youtubeSearchClient.search(anyString(), anyInt(), anyString(), anyString(),
                 isNull(), isNull(), isNull(), isNull()))
-                .willReturn(
-                        pageItems(null, item("old1", "2024-01-15T00:00:00Z"),
-                                item("old2", "2024-01-10T00:00:00Z")),
-                        pageItems(null, item("new1", "2024-03-10T00:00:00Z"),
-                                item("new2", "2024-03-01T00:00:00Z")));
-
-        searchService.runSearch(form(2, 50), "test-key");
+                .willReturn(pageItems(null, item("a", "2024-03-10T00:00:00Z"), item("b", "2024-03-05T00:00:00Z")));
         searchService.runSearch(form(2, 50), "test-key");
 
+        // 2차: 03-05 다음 날(2024-03-06)부터 이어서 → c(02-20), d(02-10) → 전체 최古 02-10
         given(youtubeSearchClient.search(anyString(), anyInt(), anyString(), anyString(),
-                isNull(), eq("2024-03-02T00:00:00Z"), isNull(), isNull()))
-                .willReturn(pageItems(null, item("later1", "2024-02-01T00:00:00Z")));
+                isNull(), eq("2024-03-06T00:00:00Z"), isNull(), isNull()))
+                .willReturn(pageItems(null, item("c", "2024-02-20T00:00:00Z"), item("d", "2024-02-10T00:00:00Z")));
+        searchService.runSearch(form(2, 50), "test-key");
 
-        SearchForm resumeForm = form(1, 50);
-        searchService.runSearch(resumeForm, "test-key");
+        // 3차: 전체 이력 최古(02-10) 다음 날(2024-02-11)부터 이어서 → e(01-15)
+        given(youtubeSearchClient.search(anyString(), anyInt(), anyString(), anyString(),
+                isNull(), eq("2024-02-11T00:00:00Z"), isNull(), isNull()))
+                .willReturn(pageItems(null, item("e", "2024-01-15T00:00:00Z")));
+        searchService.runSearch(form(1, 50), "test-key");
 
+        assertThat(videoRepository.count()).isEqualTo(5);   // a,b,c,d,e 누적(중복 없이 과거로 이어짐)
         verify(youtubeSearchClient, times(1))
                 .search(anyString(), anyInt(), anyString(), anyString(),
-                        isNull(), eq("2024-03-02T00:00:00Z"), isNull(), isNull());
+                        isNull(), eq("2024-02-11T00:00:00Z"), isNull(), isNull());
     }
 
     @Test
@@ -313,5 +315,39 @@ class SearchServiceTest {
         verify(youtubeSearchClient, times(1))
                 .search(anyString(), anyInt(), anyString(), anyString(),
                         eq("2022-01-01T00:00:00Z"), eq("2023-01-01T00:00:00Z"), isNull(), isNull());
+    }
+
+    @Test
+    void notShort_perBucketResume_longBucketNotDraggedByMediumFrontier() {
+        // 회귀: '4분 이상'(medium+long)에서 medium이 목표/예산을 먼저 소진해도,
+        // long 버킷의 재개 지점(publishedBefore)이 medium의 최古일로 끌려 내려가 최신 long을 누락하면 안 된다.
+        SearchForm form = form(2, 50);
+        form.setVideoDuration("notshort");
+
+        // 1차: medium 창1에서 목표(2) 충족 → 즉시 종료. long 버킷은 1차에서 실행되지 않음.
+        given(youtubeSearchClient.search(anyString(), anyInt(), anyString(), anyString(),
+                isNull(), isNull(), isNull(), eq("medium")))
+                .willReturn(pageItems(null, item("m1", "2024-03-10T00:00:00Z"), item("m2", "2024-03-09T00:00:00Z")));
+
+        SearchRun run1 = searchService.runSearch(form, "test-key");
+        assertThat(run1.getNewVideoCount()).isEqualTo(2);   // m1, m2 (long 미수집)
+        assertThat(videoRepository.count()).isEqualTo(2);
+
+        // 2차: medium은 자신의 최古일(2024-03-09)+1일=2024-03-10 부터 이어서 → 더 없음(빈 페이지) → 종료.
+        given(youtubeSearchClient.search(anyString(), anyInt(), anyString(), anyString(),
+                isNull(), eq("2024-03-10T00:00:00Z"), isNull(), eq("medium")))
+                .willReturn(pageItems(null));
+        // long은 자신의 커서(없음)에서 시작 → publishedBefore=null(최신부터). medium 최古일에 끌려가면 안 됨.
+        given(youtubeSearchClient.search(anyString(), anyInt(), anyString(), anyString(),
+                isNull(), isNull(), isNull(), eq("long")))
+                .willReturn(pageItems(null, item("l1", "2024-02-10T00:00:00Z"), item("l2", "2024-02-09T00:00:00Z")));
+
+        SearchRun run2 = searchService.runSearch(form, "test-key");
+
+        assertThat(run2.getNewVideoCount()).isEqualTo(2);   // l1, l2 (최신 long 정상 수집)
+        assertThat(videoRepository.count()).isEqualTo(4);
+        // 핵심: long 버킷은 publishedBefore=null(최신)로 조회되어야 한다(버그였다면 2024-03-10으로 끌려감).
+        verify(youtubeSearchClient, times(1))
+                .search(anyString(), anyInt(), anyString(), anyString(), isNull(), isNull(), isNull(), eq("long"));
     }
 }

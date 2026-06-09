@@ -62,6 +62,8 @@ public class SearchService {
     private static final int ERROR_MESSAGE_LIMIT = 1900;
     /** 한 창(같은 publishedBefore) 안에서의 최대 페이지 수(백스톱; 보통 ~500건에서 토큰이 끊김). */
     private static final int MAX_PAGES_PER_WINDOW = 12;
+    /** 우선 수집(채널 업로드) 경로로 저장된 영상의 버킷 라벨. 키워드 길이 버킷별 커서와 섞이지 않게 구분한다. */
+    private static final String CHANNEL_BUCKET = "channel";
 
     private final YoutubeSearchClient youtubeSearchClient;
     private final YoutubeVideoRepository videoRepository;
@@ -133,20 +135,6 @@ public class SearchService {
         // 기본 동작: 조회 범위를 지정해 두면 연 단위 구간으로 분할해 누락 가능성을 줄인다.
         boolean autoSplit = canSlide && publishedAfter != null && publishedBefore != null;
 
-        // 기본 동작: 동일 검색어+길이+정렬의 전체 이력에서 가장 오래된 게시일 다음 날 00:00:00부터 이어받아 누락을 방지한다
-        // (기간 자동 분할이 적용될 때는 슬라이스별로 이미 순차 수집하므로 함께 적용하지 않는다).
-        if (hasKeywordSearch && canSlide && !autoSplit) {
-            Instant cursor = searchRunItemRepository.findOldestCollectedPublishedAtForSearchCondition(q, durationMode, order);
-            if (cursor != null) {
-                publishedBefore = cursor.atZone(ZoneOffset.UTC)
-                        .toLocalDate()
-                        .plusDays(1)
-                        .atStartOfDay(ZoneOffset.UTC)
-                        .toInstant()
-                        .toString();
-            }
-        }
-
         // 수집 대상 기간 슬라이스(autoSplit이면 연 단위, 아니면 전체 1개), 최신 구간부터.
         List<String[]> slices;
         if (autoSplit) {
@@ -177,8 +165,23 @@ public class SearchService {
                 outer:
                 for (String[] slice : slices) {
                     for (String bucket : buckets) {
+                        // 버킷별 '이어서 수집': 각 길이 버킷(any/short/medium/long)이 자신의 최古 게시일부터
+                        // 독립적으로 재개한다. (autoSplit 기간 분할 모드에서는 고정 슬라이스 경계를 그대로 쓴다.)
+                        String effectiveBefore = slice[1];
+                        if (canSlide && !autoSplit) {
+                            Instant cursor = searchRunItemRepository
+                                    .findOldestCollectedPublishedAtForBucket(q, bucketLabel(bucket), order);
+                            if (cursor != null) {
+                                effectiveBefore = cursor.atZone(ZoneOffset.UTC)
+                                        .toLocalDate()
+                                        .plusDays(1)
+                                        .atStartOfDay(ZoneOffset.UTC)
+                                        .toInstant()
+                                        .toString();
+                            }
+                        }
                         collectChain(st, run, q, maxResults, order, effectiveApiKey, bucket,
-                                slice[0], slice[1], keywordTargetLimit, canSlide);
+                                slice[0], effectiveBefore, keywordTargetLimit, canSlide);
                         if (st.stop) {
                             break outer;
                         }
@@ -259,7 +262,7 @@ public class SearchService {
                     if (!StringUtils.hasText(videoId)) {
                         continue;
                     }
-                    collectVideo(st, run, videoId, toSnippet(item), pageNo);
+                    collectVideo(st, run, videoId, toSnippet(item), pageNo, CHANNEL_BUCKET);
                 }
 
                 pageToken = resp.nextPageToken();
@@ -355,7 +358,7 @@ public class SearchService {
                     if (published != null && (windowOldest == null || published.isBefore(windowOldest))) {
                         windowOldest = published;
                     }
-                    if (collectVideo(st, run, videoId, item.snippet(), pageNoInWindow)) {
+                    if (collectVideo(st, run, videoId, item.snippet(), pageNoInWindow, bucketLabel(videoDurationBucket))) {
                         newInWindow++;
                     }
 
@@ -404,7 +407,7 @@ public class SearchService {
     }
 
     private boolean collectVideo(Collector st, SearchRun run, String videoId,
-                                 YoutubeSearchResponse.Snippet snippet, int pageNo) {
+                                 YoutubeSearchResponse.Snippet snippet, int pageNo, String videoDurationBucket) {
         if (!StringUtils.hasText(videoId) || !st.seen.add(videoId)) {
             return false;
         }
@@ -425,7 +428,7 @@ public class SearchService {
             isNew = true;
         }
 
-        searchRunItemRepository.save(new SearchRunItem(run, video, st.rank++, pageNo));
+        searchRunItemRepository.save(new SearchRunItem(run, video, st.rank++, pageNo, videoDurationBucket));
         return isNew;
     }
 
@@ -570,6 +573,11 @@ public class SearchService {
             case "notshort" -> List.of("medium", "long");   // 4분 이상 = 4~20분 + 20분 초과
             default -> Collections.singletonList(null);
         };
+    }
+
+    /** 길이 버킷의 저장/조회용 라벨. 필터 없음(any 모드)은 null 대신 "any"로 통일해 버킷별 커서 키로 쓴다. */
+    private static String bucketLabel(String bucket) {
+        return bucket == null ? "any" : bucket;
     }
 
     private static String normalizeChannelInput(String input) {

@@ -38,14 +38,19 @@ public class SearchRunItem {
     @Column(name = "page_no")
     private Integer pageNo;
 
+    /** 이 영상을 수집한 길이 버킷(any/short/medium/long), 채널 수집 시 "channel". 버킷별 '이어서 수집' 재개에 사용. */
+    @Column(name = "video_duration_bucket", length = 16)
+    private String videoDurationBucket;
+
     protected SearchRunItem() {
     }
 
-    public SearchRunItem(SearchRun searchRun, YoutubeVideo video, Integer searchRank, Integer pageNo) {
+    public SearchRunItem(SearchRun searchRun, YoutubeVideo video, Integer searchRank, Integer pageNo, String videoDurationBucket) {
         this.searchRun = searchRun;
         this.video = video;
         this.searchRank = searchRank;
         this.pageNo = pageNo;
+        this.videoDurationBucket = videoDurationBucket;
     }
 
     public Long getId() {
@@ -66,5 +71,9 @@ public class SearchRunItem {
 
     public Integer getPageNo() {
         return pageNo;
+    }
+
+    public String getVideoDurationBucket() {
+        return videoDurationBucket;
     }
 }
