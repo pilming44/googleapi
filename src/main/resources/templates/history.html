@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>검색 이력</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}"/>
+</head>
+<body>
+<header class="topbar">
+    <h1>검색 이력</h1>
+    <a class="link-history" th:href="@{/videos(status='UNCLASSIFIED')}">← 영상 목록</a>
+</header>
+
+<main class="container">
+    <p class="empty" th:if="${#lists.isEmpty(runs)}">검색 이력이 없습니다.</p>
+
+    <table class="history" th:unless="${#lists.isEmpty(runs)}">
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>검색어</th>
+            <th>길이</th>
+            <th>목표</th>
+            <th>페이지당</th>
+            <th>호출수</th>
+            <th>정렬</th>
+            <th>시작</th>
+            <th>종료</th>
+            <th>총수집</th>
+            <th>신규</th>
+            <th>중복</th>
+            <th>결과</th>
+            <th>오류</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="run : ${runs}">
+            <td th:text="${run.id}">1</td>
+            <td class="query" th:text="${run.query}">a|b</td>
+            <td th:text="${run.videoDuration}">any</td>
+            <td th:text="${run.targetCount}">50</td>
+            <td th:text="${run.maxResults}">50</td>
+            <td th:text="${run.pageCount}">1</td>
+            <td th:text="${run.orderType}">date</td>
+            <td th:text="${run.startedAt != null ? #strings.replace(#strings.substring(run.startedAt.toString(),0,19),'T',' ') : ''}">2024-01-01 00:00:00</td>
+            <td th:text="${run.finishedAt != null ? #strings.replace(#strings.substring(run.finishedAt.toString(),0,19),'T',' ') : ''}">2024-01-01 00:00:00</td>
+            <td th:text="${run.totalFetchedCount}">0</td>
+            <td th:text="${run.newVideoCount}">0</td>
+            <td th:text="${run.duplicatedVideoCount}">0</td>
+            <td th:text="${run.resultNote}">완료</td>
+            <td class="err" th:text="${run.errorMessage}"></td>
+        </tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

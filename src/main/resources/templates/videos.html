@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>YouTube 영상 분류</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}"/>
+    <script th:src="@{/js/app.js}" defer></script>
+</head>
+<body>
+<header class="topbar">
+    <h1>YouTube 영상 분류</h1>
+    <a class="link-history" th:href="@{/history}">검색 이력</a>
+</header>
+
+<main class="container">
+
+    <div class="alert error" th:if="${error}" th:text="${error}">오류 메시지</div>
+
+    <!-- 검색 폼 (요구사항 2) -->
+    <details class="search-panel" open>
+        <summary>검색</summary>
+        <form class="search-form" th:action="@{/search}" th:object="${searchForm}" method="post">
+            <div class="field">
+                <label>키워드 <small>(콤마 또는 줄바꿈으로 여러 개 — OR 검색)</small></label>
+                <textarea th:field="*{keywords}" rows="2" placeholder="예: 고양이, 강아지"></textarea>
+            </div>
+            <div class="field">
+                <label>우선 수집 채널 <small>(선택 · 영상 길이와 무관하게 먼저 전체 수집)</small></label>
+                <textarea th:field="*{priorityChannels}" rows="2"
+                          placeholder="예: UCxxxxxxxxxxxxxxxxxxxxxx, @channelhandle, https://www.youtube.com/@channelhandle"></textarea>
+            </div>
+            <div class="field">
+                <label>API Key</label>
+                <input type="text" th:field="*{apiKey}" autocomplete="off"
+                       placeholder="YouTube Data API v3 Key"/>
+            </div>
+            <div class="row">
+                <div class="field">
+                    <label>페이지당 개수 <small>(1~50)</small></label>
+                    <input type="number" th:field="*{maxResults}" min="1" max="50"/>
+                </div>
+                <div class="field">
+                    <label>목표 수집 건수 <small>(최대 <span th:text="${maxTarget}">5000</span> · date 정렬 시 기간 자동확장)</small></label>
+                    <input type="number" th:field="*{targetCount}" min="1" th:max="${maxTarget}"/>
+                </div>
+                <div class="field">
+                    <label>정렬</label>
+                    <select th:field="*{order}">
+                        <option value="date">date (최신순)</option>
+                        <option value="relevance">relevance</option>
+                        <option value="viewCount">viewCount</option>
+                        <option value="rating">rating</option>
+                        <option value="title">title</option>
+                        <option value="videoCount">videoCount</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>영상 길이</label>
+                    <select th:field="*{videoDuration}">
+                        <option value="any">전체</option>
+                        <option value="short">4분 미만 (쇼츠)</option>
+                        <option value="notshort">4분 이상 (영상)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="field">
+                    <label>게시일 이후 <small>(선택)</small></label>
+                    <input type="date" th:field="*{publishedAfter}"/>
+                </div>
+                <div class="field">
+                    <label>게시일 이전 <small>(선택)</small></label>
+                    <input type="date" th:field="*{publishedBefore}"/>
+                </div>
+            </div>
+            <button type="submit" class="btn-search">검색</button>
+        </form>
+    </details>
+
+    <!-- 상태별 탭 (요구사항 7) -->
+    <nav class="tabs">
+        <a class="tab" th:each="s : ${statuses}"
+           th:href="@{/videos(status=${s.name()})}"
+           th:classappend="${s == currentStatus} ? 'active' : ''">
+            <span th:text="${s.label}">미분류</span>
+            <span class="tab-badge" th:attr="data-status=${s.name()}"
+                  th:text="${counts.get(s.name())}">0</span>
+        </a>
+    </nav>
+
+    <!-- 카드 그리드 (요구사항 4~6) -->
+    <p class="empty" th:if="${#lists.isEmpty(cards)}">이 탭에 영상이 없습니다.</p>
+
+    <section class="grid">
+        <article class="card" th:each="card : ${cards}" th:attr="data-video-id=${card.videoId}">
+            <a th:href="|https://www.youtube.com/watch?v=${card.videoId}|" target="_blank" rel="noopener">
+                <img class="thumb" th:src="${card.thumbnailUrl}" th:alt="${card.title}"
+                     referrerpolicy="no-referrer"/>
+            </a>
+            <div class="card-body">
+                <a class="title" th:href="|https://www.youtube.com/watch?v=${card.videoId}|"
+                   target="_blank" rel="noopener" th:text="${card.title}">제목</a>
+                <p class="desc"
+                   th:text="${card.description == null ? '' : (card.description.length() > 150 ? #strings.substring(card.description,0,150) + '...' : card.description)}">
+                    설명</p>
+                <div class="meta">
+                    <span class="channel" th:text="${card.channelTitle}">채널명</span>
+                    <span class="date"
+                          th:text="${card.publishedAt != null ? #strings.substring(card.publishedAt.toString(),0,10) : ''}">2024-01-01</span>
+                </div>
+                <div class="actions">
+                    <button type="button" class="status-btn"
+                            th:each="t : ${statuses}" th:if="${t != currentStatus}"
+                            th:classappend="${'btn-' + t.name().toLowerCase()}"
+                            th:attr="data-video-id=${card.videoId},data-status=${t.name()}"
+                            th:text="${t.label}">보관</button>
+                </div>
+            </div>
+        </article>
+    </section>
+
+</main>
+</body>
+</html>
